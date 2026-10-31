@@ -1,6 +1,6 @@
 # Dizzy 3 and 5 (ZX Spectrum): comparing the TZX dumps
 
-All addresses are decimal unless they're written as 0x…. Every block in every dump has a valid XOR checksum. I disassembled with SkoolKit and simulated individual routines in its Z80 simulator. I didn't play either game through in an emulator.
+All addresses are decimal unless they're written as 0x…. Every block in every dump has a valid XOR checksum. I disassembled with SkoolKit and simulated individual routines in its Z80 simulator. For the a2 heart bug I also ran the game itself (SkoolKit CSimulator with the real 48K ROM and interrupts) with scripted and random input. Neither game was played through to its end. The original Fantasy World Dizzy source (Wireframe #19 release, `Wireframe19-master.zip` in this project) was used to confirm label names and data layout.
 
 Dump names follow the filenames: "a" and "a2" are the alternate dumps `48K-128K a` and `48K-128K a2`.
 
@@ -16,14 +16,52 @@ Tape layout, the same in all three: header "DIZZY 3", BASIC (294 bytes), headerl
 
 **a2 differs from the other two only inside the main block, in 97 bytes:**
 
-1. **47662 and 47696**, the operands of `LD IX,nn`. In a2 the buffer for the particle effect (32 particles × 2 bytes) starts at **23590 (0x5C26)**. In the other two it starts at **23654 (0x5C66)**. The effect is routine 47506, which runs when you rescue Daisy (just after the text "OH MY HERO! I KNEW YOU'D COME TO MY RESCUE").
-   - The loader keeps its "128K detected" flag at **23627 (0x5C4B)**. That address is inside a2's buffer: it's byte +1 of particle 18, which is a random coordinate.
-   - Every frame, the IM 2 handler (63702) calls 24950. When the flag is non-zero, 24950 pages in bank 3 and calls the music player at 49155. On a 48K machine, 49155 holds game data.
-   - **Result: in a2 on a 48K Spectrum, the game crashes as soon as you rescue Daisy.** It survives only if the random value happens to be 0, a 1-in-256 chance. On a 128K machine the music stops only in that same 1-in-256 case. In the simulator, routine 47640 set the flag to 211 in a2 and left it untouched in the other build.
-2. **45117–45119**: three dead padding bytes after `JP 63693`. They're `00 00 00` in the later build and `25 A7 FE` in a2.
-3. **57083–57182**: a 100-byte runtime scratch buffer used by the sprite routine (filled at 56722 and read through SP at 57020). The two builds contain different leftover memory there.
+1. **47662 and 47696**, the operands of `LD IX,nn` in the heart effect after you rescue Daisy (just after "OH MY HERO! I KNEW YOU'D COME TO MY RESCUE"). In the original source (Wireframe #19 release) it's `resethearts` / `updatehearts` in X3, with table `hearttable`.
+   - a2 puts the 32 × 2-byte heart table at **23590 (0x5C26)**, the later build at **23654 (0x5C66)**. In the source (X4), `attritable EQU &5CC6-5*32` (= 23590, the shadow attribute table; its first 5 rows lie over the system variables and are never used for attributes).
+   - The Spectrum section defines `hearttable equ attritable+64`; the **Amstrad section defines `hearttable equ attritable`**. a2 was evidently built with the un-offset definition. (The X4.PDS header also stores the line `hearttable equ attritable+64`, suggesting it was among the last edits to that file.)
+   - At 23590 the table covers **`ifmem128 equ 23627`**, the loader's "128K detected" flag: byte +1 of heart 18, a random value. In the simulator the reset routine set it to 211 in a2 and left it untouched in the later build.
+   - From then on, every interrupt (63725 → 24950 = `seeifstarttune`/`check128` in the source) sees the flag set, "pages in bank 3" (which does nothing on a 48K) and calls 49155. On a 48K machine that address is part of a data table.
 
-Items 2 and 3 are uninitialised memory, which means a2 was saved from a separate build or mastering session. Item 1 fixes a real bug, so a2 is almost certainly the earlier release.
+   **What happens on a 48K machine: memory corruption, not an immediate crash.** (An earlier version of this doc said "crashes"; that was wrong.)
+   - **The stray call returns.** Executed as code, the data at 49155 does `DEC L / DEC B / LD C,A / DEC B / LD (36369),A / LD (BC),A / OR B / LD (BC),A / JP NZ,57858`, and 57858 reaches a `RET`.
+     - When `A | 0x7D` is 0x7F it first runs `RST 56`, the ROM's keyboard-interrupt routine. That only touches unused system variables, because the game never changes IY from 0x5C3A.
+     - The only way it runs away is A ≥ 128 with bit 1 clear.
+   - **A never reaches 128.** At that call A is:
+     - 1 when flag 63785 is set (that flag is only ever 0 or 1);
+     - 3, 2 or 1 from the 4-frame countdown in 64017;
+     - 0 after the Dizzy redraw;
+     - 1 on a screen-edge room change;
+     - the previous room number (0–100) on frames where Dizzy changes room (`RET NZ` at 64300).
+
+     So the stray call always returns.
+   - **Emulated:** SkoolKit CSimulator, real 48K ROM, 50 Hz interrupts, a2 booted from its entry point, a game started, then the flag set as the hearts would leave it.
+     - 5 minutes of scripted play: no crash and identical game state to a control run. The stray call ran once per frame, 14,701 times, with A ∈ {0,1,2,3}.
+     - 17 minutes of random input: no crash either.
+   - **The damage** (RAM diff against the control):
+     - Game data at **32000–32003, 32509, 32513, 32765** and **36369**. The first group is ROOMDATA (rooms at 25744 + offset table at 25540); 36369 is a message byte.
+     - Room numbers passed as A on room changes add more writes in 0x7D00–0x7DFF (room 72).
+     - The rest is unused system variables and stale stack.
+   - **Effects** (rooms drawn in the simulator from clean versus corrupted RAM):
+     - **Room 72, DENZIL'S PAD:** scenery garbled; the hut is replaced by tree-trunk pieces and there are stray fragments.
+     - **Room 75, COMPLEX CLOUD ROUTE: entering it hangs the game.** The corrupted byte at 32509 throws the room decoder (62735) out of step. It only stops when its pointer lands exactly on the next room's start, so it runs on through memory and never finishes; not done after 300 million instructions.
+     - **Room 77, THE ACTIVE VOLCANO:** a cloud misplaced and partly missing.
+     - **36369** is the height byte of the shopkeeper's "THAT'S NO GOOD TO ME" box (36364), overwritten every frame with A. Heights 1–3 just give a box too short for its text. **Height 0 is destructive:** the box loops run 256 times and write 25-byte runs over about 2,300 bytes of code and data, so a crash is near-certain if that message is shown at such a moment.
+   - **On a 128K machine** the corrupted flag stays non-zero (or 0 in 1 case in 256, which silences the music) and the real music player is called, so nothing else happens.
+2. **45117–45119**: `00 00 00` in the later build, `25 A7 FE` in a2. (An earlier version of this doc called these "dead padding"; that was wrong. They're variables, accessed by base + index.)
+   - The one-off Kempston detection routine (45075–45116, run once at boot from 24839, ending in `JP 63693`) is **recycled as data afterwards**. 45075 and 45087 hold two per-room lists of 3-byte entries (x, y, type; counts at 44683/44684, cleared on every room change at 62652, filled at 44745, animated at 44972).
+   - **45116–45120 is the inventory**: a list of item-record numbers ended by the value 1 (record 1 is the pseudo-item "EXIT AND DON'T DROP"). Its first byte is also the high byte of the routine's final `JP 63693`.
+   - 63530 resets it at the start of every game (called from 42477) to `[8, 0, 1, 0, 0]`: the apple (record 8), one empty slot, then the terminator. Getting the bag moves the terminator to 45120 (45223), giving four slots, which is why 45120 also works as the "has bag" flag (63094).
+   - Every read (pick-up 45159, hole-in-bag 45559, inventory display 63136/63219/63467) happens during play, after that reset. **So the bytes on tape are never read.**
+   - a2's `F8 25 A7 FE 00` isn't a valid inventory (A7 and FE aren't item numbers), and the pattern occurs nowhere else in either image.
+   - The source confirms the layout. In X3, `flamelist defs 4*3,0`, `waterlist defs 8*3,0`, `talkbefore defs 5,0`, `objectscarried defs 4` (no fill value) and `bag defb 0`. In X5, the one-off `setup` / `checkifkempston` code is assembled with **`org flamelist`** on top of them, guarded by `if setupend>endflamelist … error "setup too big"`.
+   - The three bytes after the setup code's final `JP` are therefore uninitialised `objectscarried` space, holding whatever was in the development machine's RAM. `bag` is `defb 0`, which is why 45120 is 0 in both builds.
+3. **57083–57182**: **Dizzy's sprite undo record** (`multdimstore defs 2+2+24*4 ;x to add,height,screentablepointer,data` in PRTDIZZY: reserved without initial contents).
+   - 56705 draws Dizzy by XOR-masking him onto the screen and stores at 57083 a 4-byte header (x/2, row count, row-table pointer) plus the 4 XOR bytes applied to each row. 100 bytes allows up to 24 rows.
+   - Every 4th interrupt (64017 → 64047) erases him by replaying the record (57020), then redraws him (63940 → 56705). 57020 is also called at 42828.
+   - The tape contents would only matter if an erase ran before the first draw, and that never happens. At game start, 64761 falls through to 64841 → 62643 (draw room) → 63916 → 56705, so a fresh record is written before 42525 clears 63785 and lets the interrupt start erasing and redrawing.
+   - Neither build's tape contents are a valid record anyway (the header says 0 rows in the later build and 85 rows in a2). The later build holds what looks like a leftover table of increasing words; a2 holds dither-pattern bytes that look like graphics data.
+
+Items 2 and 3 are leftover RAM contents in areas that are always written before they're read, so they have no effect on play. They do show that a2 was saved from a separate build or mastering session. Item 1 fixes a real bug (one that matches the Amstrad definition in the source), so a2 is almost certainly the earlier release.
 
 ## Spellbound Dizzy (Dizzy 5): 2 dumps, 2 builds
 
