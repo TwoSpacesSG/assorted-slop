@@ -1,0 +1,45 @@
+CLASS a ASprite
+	FIELD a _palettes I
+	FIELD a _data_format S
+	FIELD a _alpha Z
+	FIELD a _modules [B
+	FIELD a _frames_fm_start [S
+	FIELD a _modules_image [[Ljavax/microedition/lcdui/Image;
+	FIELD b _cur_pal I
+	FIELD b _frames_nfm [B
+	FIELD b _anims_af_start [S
+	FIELD c _modules_data_off [S
+	FIELD d _fmodules [B
+	FIELD e _anims_naf [B
+	FIELD f _index1 I
+	FIELD f _aframes [B
+	FIELD g _index2 I
+	FIELD g _modules_data [B
+	METHOD a GetAFrames (I)I
+	METHOD a DecodeImage (I)[I
+	METHOD a GetAFrameTime (II)I
+	METHOD a BuildCacheImages (IIII)V
+	METHOD a PaintModule (Ljavax/microedition/lcdui/Graphics;IIII)V
+	METHOD a PaintFModule (Ljavax/microedition/lcdui/Graphics;IIIII)V
+	METHOD a paintFrame (Ljavax/microedition/lcdui/Graphics;IIIIII)V
+	METHOD a PaintAFrame (Ljavax/microedition/lcdui/Graphics;IIIIIII)V
+	METHOD a Load ([BI)V
+	METHOD b DrawPage (Ljavax/microedition/lcdui/Graphics;Ljava/lang/String;III)V
+CLASS c
+	METHOD a WriteIntLE ([BII)V
+CLASS g ASpriteInstance
+	FIELD a _posX I
+	FIELD a _sprite La;
+	FIELD b _posY I
+	FIELD e _flags I
+	FIELD f _nCrtAnim I
+	FIELD g _nCrtAFrame I
+	FIELD h _nCrtTime I
+	METHOD a isAnimEnded ()Z
+	METHOD a SetAnim (I)V
+	METHOD a PaintSprite (Ljavax/microedition/lcdui/Graphics;)V
+	METHOD b UpdateSpriteAnim ()V
+CLASS i
+	METHOD a USHORT_OFF ([BI)I
+	METHOD b GetAnimTotalTime (La;II)I
+	METHOD b restoreInt ([BI)I
